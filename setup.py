@@ -78,7 +78,7 @@ def generate_source_code():
         os.chdir("EmbeddedProto")
         
         command = ["protoc", "-I../proto", "--eams_out=../embedded/main/generated", 
-                   "../proto/assignment.proto"]
+                   "../proto/assignment.proto", "../proto/processing.proto"]
         if "Windows" == platform.system():
             command.append("--plugin=protoc-gen-eams=protoc-gen-eams.bat")
         else:

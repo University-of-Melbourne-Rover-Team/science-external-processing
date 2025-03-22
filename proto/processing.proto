@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+message Request {
+  message Motor {
+    message Off {}
+    oneof cmd {
+      Off off = 1;
+      sint32 velocity = 2;
+    }
+  }
+  Motor motor_1 = 1;
+  Motor motor_2 = 2;
+  bool heating_element = 3;
+}
+
+message Recv {
+  /*
+    (self & (1 << 1)): limit switch 1
+    (self & (1 << 2)): limit switch 2
+    (self & (1 << 3)): limit switch 3
+    (self & (1 << 4)): limit switch 4
+  */
+  uint32 limit_switches = 1;
+
+  message GpioResponse {
+    message Off {}
+    oneof response {
+      Off off = 1;
+      uint32 sense_current = 2;
+    }
+  }
+
+  GpioResponse heating_element = 2;
+  GpioResponse power = 3;
+
+  message MotorResponse {
+    message Fault {}
+    oneof response {
+      Fault fault = 1;
+      uint32 current_sense = 2;
+    }
+  }
+  MotorResponse motor_response_1 = 4;
+  MotorResponse motor_response_2 = 5;
+
+  uint32 temp_sense = 6;
+}

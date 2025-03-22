@@ -1,7 +1,20 @@
+#pragma once
+#define analog_read(pin) analogRead(pin)
+#define sleep_us(us) delayMicroseconds(us)
+#define pin_mode(pin, kind) pinMode(pin, kind)
+#define digital_write(pin, state) digitalWrite(pin, state)
+#define digital_read(pin) digitalRead(pin)
+
 #include "generated/assignment.h"
+#include "generated/processing.h"
 #include <WriteBufferFixedSize.h>
 #include <ReadBufferFixedSize.h>
 #include <Errors.h>
+
+#include <gpio.h>
+#include <ads_7828.h>
+#include <drv.h>
+#include <esp_comms.h>
 
 //NOTE: EmbeddedProtobuf needs to be added as a library for this to work
 //which the submodule needs to be cloned
@@ -16,115 +29,42 @@
 
 //idk what it is on windows. sorry!
 
-#define DEVKIND DevKind::Battery
+bool power_enabled = false;
+void try_enable_pwr_ctrl() {
+  const bool ctrl_pwr = analog_read(OFFSIGIN) != 0.;
 
-void setup() {
-  Serial.begin(115200);
-  while (Serial.available() < 1) {}
-  while (Serial.available() > 0) {
-    Serial.read();
+  if (ctrl_pwr && !power_enabled) {
+    // do init
+    power_enabled = true;
+    digital_write(PWR_CTRL, HIGH);
+  } else if (!ctrl_pwr && power_enabled) {
+    // do uninit
+    power_enabled = false;
+    digital_write(PWR_CTRL, LOW);
   }
-  handshake(DEVKIND);
 }
 
-EmbeddedProto::WriteBufferFixedSize<10> write_buf;
+void setup() {
+  setup_gpio();
+  setup_spi();
+  setup_i2c();
+  setup_esp_now_comms();
+  try_enable_pwr_ctrl();
+}
 
-void handshake(const DevKind& kind) {
-  delay(5);
-  Assignment asn;
-  asn.set_asn(kind);
-  write_buf.clear();
-  const auto err = asn.serialize(write_buf);
+AdsReading ads_reading;
+GpioReading gpio_reading;
 
-  if (err != EmbeddedProto::Error::NO_ERRORS) {
-    // this should never happen
-  }
+void loop() {
+  try_enable_pwr_ctrl();
 
-  const auto len = write_buf.get_size();
-  const auto bytes = write_buf.get_data();
-
-  EmbeddedProto::ReadBufferFixedSize<10> read_buf;
-  Assignment out;
-
-  const auto ser_err = asn.serialize(write_buf);
-
-  if (ser_err != EmbeddedProto::Error::NO_ERRORS) {
+  if (!power_enabled) {
     return;
   }
 
-  while (true) {
-    auto available_bytes = Serial.available();
-    if (available_bytes > 0) {
-      read_buf.clear();
+  read_ads(&ads_reading);
+  read_gpio(&gpio_reading);
 
-      auto buf = read_buf.get_data();
-      const auto read = Serial.readBytes(read_buf.get_data(), available_bytes);
-      uint8_t err = 0;
-      if(read != available_bytes) {
-        err = 1;
-        Serial.write(&err, 1);
-        continue;
-      }
-      read_buf.set_bytes_written(available_bytes);
-
-      const auto de_err = out.deserialize(read_buf);
-      const auto hack = DevKind::HostAck;
-
-      if (de_err != EmbeddedProto::Error::NO_ERRORS) {
-        err = 2;
-        Serial.write(&err, 1);
-        continue;
-      }
-
-      if (out.asn() != hack) {
-        err = 3;
-        Serial.write(&err, 1);
-        continue;
-      }
-
-      auto dack = DevKind::DevAck;
-      out.set_asn(dack);
-      write_buf.clear();
-      const auto ack_err = out.serialize(write_buf);
-      if (ack_err != EmbeddedProto::Error::NO_ERRORS) {
-        err = 4;
-        Serial.write(&err, 1);
-        continue;
-      }
-
-      const auto ack_len = write_buf.get_size();
-      const auto ack_bytes = write_buf.get_data();
-
-      Serial.write(ack_bytes, 2);
-      delay(10);
-      return;
-    } else {
-      out.set_asn(kind);
-      write_buf.clear();
-      const auto err = asn.serialize(write_buf);
-    }
-
-    Serial.write(bytes, len);
-    delay(10);
-  }
-}
-
-uint8_t v = 0;
-
-void loop() {
-  const auto available_bytes = Serial.available();
-  if (available_bytes > 0) {
-    if (available_bytes == 1 && Serial.peek() == 0) {
-      handshake(DEVKIND);
-      return;
-    }
-
-    // do input processing here
-  }
-
-  // const auto bytes = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-
-
-  Serial.write(&v, 1);
+  try_send_data(gpio_reading, ads_reading, power_enabled);
   delay(10);
 }
